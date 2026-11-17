@@ -2,6 +2,8 @@
 
 A meditation disguised as a coding agent, for Rex.
 
+![no-effort running in a Rex pane](screenshot.png)
+
 ## Install
 
 Needs Node 18+.
