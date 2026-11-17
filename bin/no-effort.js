@@ -55,29 +55,55 @@ function wrap(text, width) {
   return lines;
 }
 
-// ---------- renderer: committed lines scroll away, the live region is redrawn ----------
-let liveRows = 1;
+// ---------- renderer: full screen, redrawn from a line buffer ----------
+// The transcript fills the screen from the top (only its newest rows when it
+// overflows) and the dock is pinned to the bottom rows. Entries can be functions
+// of the width, so the welcome card is rebuilt when the pane is resized.
+const rowsN = () => out.rows || 24;
+const history = []; // strings, or () => string[]
+const HISTORY_MAX = 2000;
 let liveLines = () => [];
+let dockFn = () => [];
 
-function rowsOf(line) {
-  return Math.max(1, Math.ceil(vlen(line) / cols()));
+// Split a styled line into rows of at most `width` visible characters. Each new
+// row starts by replaying the escapes seen so far, so colors carry over.
+const TOKEN = /\x1b\]8;;[^\x07]*\x07|\x1b\[[0-9;]*m|[\s\S]/gu;
+function wrapRow(line, width) {
+  const rows = [];
+  let cur = "";
+  let n = 0;
+  let style = "";
+  for (const t of line.match(TOKEN) || []) {
+    if (t.length > 1 && t[0] === "\x1b") {
+      cur += t;
+      if (t.endsWith("m")) style = t === RESET ? "" : style + t;
+      continue;
+    }
+    if (n === width) { rows.push(cur + RESET); cur = style; n = 0; }
+    cur += t;
+    n++;
+  }
+  rows.push(cur + RESET);
+  return rows;
 }
-function clearLive() {
-  out.write("\r" + (liveRows > 1 ? `\x1b[${liveRows - 1}A` : "") + "\x1b[J");
-}
-function drawLive() {
-  const ls = liveLines();
-  out.write(ls.join("\n"));
-  liveRows = ls.length ? ls.reduce((n, l) => n + rowsOf(l), 0) : 1;
-}
+const expand = (entries, width) =>
+  entries.flatMap((e) => (typeof e === "function" ? e() : [e])).flatMap((l) => wrapRow(l, width));
+
 function render() {
-  clearLive();
-  drawLive();
+  const w = cols();
+  const h = rowsN();
+  const dock = expand(dockFn(), w).slice(-h);
+  const room = h - dock.length;
+  const body = expand([...history, ...liveLines()], w).slice(-room || h);
+  while (body.length < room) body.push("");
+  const frame = [...body.slice(0, room), ...dock];
+  // synchronized output: the terminal shows the frame in one go, no flicker
+  out.write("\x1b[?2026h\x1b[H" + frame.map((r) => r + "\x1b[K").join("\r\n") + "\x1b[J\x1b[?2026l");
 }
 function commit(...lines) {
-  clearLive();
-  out.write(lines.map((l) => l + RESET + "\n").join(""));
-  drawLive();
+  history.push(...lines);
+  if (history.length > HISTORY_MAX) history.splice(0, history.length - HISTORY_MAX);
+  render();
 }
 const gap = () => commit("");
 
@@ -103,9 +129,9 @@ liveLines = () => {
   if (ui.typing !== null) ls.push(ui.typing);
   ls.push(...ui.pending);
   if (ui.menu) ls.push(...menuLines());
-  if (ui.dock) ls.push(...dockLines());
   return ls;
 };
+dockFn = () => (ui.dock ? dockLines() : []);
 
 function dockLines() {
   const w = cols();
@@ -190,10 +216,10 @@ const ended = () => cancelled() || timeUp();
 // ---------- welcome ----------
 function welcomeLines() {
   const w = NE.welcome;
-  const W = Math.min(cols() - 1, 100);
+  const W = cols() - 1;
   const inner = W - 4;
   const two = inner >= 66;
-  const leftW = two ? 32 : inner;
+  const leftW = two ? Math.max(32, Math.floor(inner * 0.38)) : inner;
   const rightW = two ? inner - leftW - 3 : inner;
 
   const left = [
@@ -233,7 +259,7 @@ function welcomeLines() {
 }
 
 function boot() {
-  commit(...welcomeLines());
+  commit(welcomeLines); // rebuilt at the current width on every redraw
   gap();
   commit(c("orange", NE.promo.title), c("dim", NE.promo.body));
   ui.dock = true;
@@ -351,7 +377,7 @@ async function askPermission(practice) {
     ],
     "enter to allow · esc to leave",
     "permission",
-    (i, logged) => { commit("", logged); session.permitted = true; },
+    (i, logged) => { commit(logged); session.permitted = true; },
   );
   while (!session.permitted && !cancelled()) await sleep(120);
 }
@@ -524,8 +550,8 @@ function quit() {
   ui.typing = null;
   ui.pending = [];
   ui.dock = false;
-  render();
-  out.write(c("dim", "⏺ left. nothing was left unfinished.") + RESET + "\n\x1b[?25h");
+  out.write("\x1b[?1049l\x1b[?25h"); // back to the normal screen
+  out.write(c("dim", "⏺ left. nothing was left unfinished.") + RESET + "\n");
   stdin.setRawMode(false);
   process.exit(0);
 }
@@ -565,6 +591,6 @@ stdin.setRawMode(true);
 stdin.setEncoding("utf8");
 stdin.on("data", onKey);
 out.on("resize", render);
-process.on("exit", () => out.write("\x1b[?25h"));
-out.write("\x1b[?25l"); // hide cursor
+process.on("exit", () => out.write("\x1b[?1049l\x1b[?25h"));
+out.write("\x1b[?1049h\x1b[?25l"); // own screen, hidden cursor
 boot();
