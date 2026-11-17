@@ -1,13 +1,12 @@
--- no-effort for Rex: a meditation disguised as a coding agent, one key away.
+-- no-effort for Rex: a meditation disguised as a coding agent.
 --
--- Load it from init.lua and bind a key to its action (install.js does both):
+-- Load it from init.lua (install.js does this):
 --
 --   dofile("/path/to/rex-no-effort/rex-no-effort.lua").setup{ node = "/path/to/node" }
---   rex.bind("cmd+alt+n", "no_effort")
 --
 -- The action opens a pane beside the focused one and starts a sit. The pane
--- closes when you leave (ctrl+c). Also in the palette as "Sit with no-effort",
--- and from a shell: rex do no_effort [split=right|left|above|below|tab]
+-- closes when you leave (ctrl+c). In the palette as "Sit with no-effort", and
+-- from a shell: rex do no_effort [split=right|left|above|below|tab]
 
 local here = debug.getinfo(1, "S").source:gsub("^@", ""):match("^(.*)/[^/]*$") or "."
 local CLI = here .. "/bin/no-effort.js"
